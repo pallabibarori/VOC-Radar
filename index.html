@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOC Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* Plan: ink-blue instrument panel. Signal teal accent; red/amber/green reserved for sentiment & severity.
+   Layout: input console on top, summary tiles, then two-column evidence (clusters | charts), ICPs last. */
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --ink: #16202b;
+  --muted: #5b6875;
+  --line: #dde2e7;
+  --accent: #0b7a75;
+  --accent-ink: #ffffff;
+  --accent-soft: #e2f2f1;
+  --pos: #23845a;
+  --neg: #c63d3d;
+  --mix: #c18a00;
+  --neu: #8d98a3;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151b; --surface: #161e26; --ink: #e6ebf0; --muted: #98a5b2; --line: #26313c;
+    --accent: #3cc2b9; --accent-ink: #062523; --accent-soft: #14302f;
+    --pos: #4cc18a; --neg: #f07171; --mix: #e6b53c; --neu: #7c8894; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #161e26; --ink: #e6ebf0; --muted: #98a5b2; --line: #26313c;
+  --accent: #3cc2b9; --accent-ink: #062523; --accent-soft: #14302f;
+  --pos: #4cc18a; --neg: #f07171; --mix: #e6b53c; --neu: #7c8894; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font-body); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; display: grid; gap: 22px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: 34px; letter-spacing: -0.01em; }
+h2 { font-size: 21px; }
+h3 { font-size: 17px; }
+p { margin: 0; }
+a { color: var(--accent); }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+header.top { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: end; justify-content: space-between; }
+header.top p { max-width: 64ch; }
+
+/* console */
+.console { display: grid; gap: 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+input[type=text], textarea {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; width: 100%;
+}
+input[type=text] { font-size: 17px; flex: 1 1 280px; width: auto; }
+textarea { min-height: 110px; resize: vertical; font-size: 13.5px; }
+input:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+button, .btn {
+  font: 600 14px var(--font-body); border-radius: 8px; padding: 10px 16px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+button:hover, .btn:hover { border-color: var(--accent); }
+.btn.primary, button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+.step { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 8px; align-content: start; }
+.step .tag { font: 500 11px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.status { font-size: 14px; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); display: none; gap: 10px; align-items: center; justify-content: space-between; }
+.status.show { display: flex; }
+.status.err { background: color-mix(in srgb, var(--neg) 14%, transparent); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-weight: 500; }
+
+/* summary */
+.res-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: center; }
+.badge { font: 600 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); }
+.badge.live { color: var(--pos); border-color: var(--pos); }
+.badge.knowledge { color: var(--mix); border-color: var(--mix); }
+.badge.example { color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.tile .k { font-size: 12.5px; color: var(--muted); }
+.tile .v { font: 600 28px var(--font-mono); font-variant-numeric: tabular-nums; }
+.sentbar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; background: var(--line); }
+.sentbar span { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12.5px; color: var(--muted); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+
+.grid2 { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; align-items: start; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+
+.bars { display: grid; gap: 9px; }
+.bar { display: grid; grid-template-columns: minmax(110px, 38%) 1fr 84px; gap: 10px; align-items: center; font-size: 13.5px; }
+.bar .track { height: 12px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.bar .fill { height: 100%; border-radius: 4px; }
+.bar .val { text-align: right; color: var(--muted); }
+.srcbar { display: grid; grid-template-columns: minmax(90px, 30%) 1fr 30px; gap: 10px; align-items: center; font-size: 13.5px; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; color: var(--muted); }
+.tabs button[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent); }
+.panel { padding-top: 14px; display: grid; gap: 10px; }
+details.cl { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+details.cl > summary { cursor: pointer; padding: 12px 14px; display: flex; gap: 10px; align-items: center; list-style: none; flex-wrap: wrap; }
+details.cl > summary::-webkit-details-marker { display: none; }
+details.cl > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+details.cl[open] > summary::before { transform: rotate(90deg); }
+.cl-body { padding: 0 14px 14px 32px; display: grid; gap: 8px; }
+.sev { font: 600 11px var(--font-body); padding: 2px 8px; border-radius: 999px; color: #fff; }
+.sev.High { background: var(--neg); } .sev.Medium { background: var(--mix); } .sev.Low { background: var(--neu); }
+.quote { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; font-size: 14px; }
+.quote .meta { font-size: 12px; color: var(--muted); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; background: var(--bg); position: sticky; top: 0; }
+select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+
+.icps { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+.icp { display: grid; gap: 8px; align-content: start; }
+.icp .rank { font: 500 11.5px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+.icp dl { margin: 0; display: grid; gap: 6px; font-size: 14px; }
+.icp dt { font-weight: 600; font-size: 12.5px; color: var(--muted); }
+.icp dd { margin: 0; }
+.icp .angle { background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+.insights { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.insight { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; align-content: start; }
+.insight .k { font: 500 11px var(--font-mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.insight p { font-size: 14.5px; }
+.insight.neg { border-left-color: var(--neg); } .insight.pos { border-left-color: var(--pos); } .insight.mix { border-left-color: var(--mix); }
+.empty { padding: 18px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>VOC Radar</h1>
+      <p class="muted">Voice of customer for any product or company: what people praise, what hurts, and who your best customers are. Runs on your own Claude account.</p>
+    </div>
+  </header>
+
+  <section class="card console" aria-label="Research a product">
+    <div class="row">
+      <label for="product" class="small muted" style="width:100%">Product or company</label>
+      <input type="text" id="product" placeholder="e.g. Notion, iPhone 18 Pro, Figma" autocomplete="off">
+    </div>
+    <div class="steps">
+      <div class="step">
+        <span class="tag">Live · recommended</span>
+        <h3>Search the web in Claude</h3>
+        <p class="small muted">Opens a new Claude chat with the research request filled in. Claude searches Reddit, Hacker News, app stores, G2, Trustpilot and trusted review sites. Turn on web search in that chat, then copy the JSON block it returns and paste it below.</p>
+        <div class="row">
+          <a class="btn primary" id="liveLink" href="https://claude.ai/new" target="_blank" rel="noopener">Open live search ↗</a>
+          <button id="copyPrompt" type="button">Copy request</button>
+        </div>
+      </div>
+      <div class="step">
+        <span class="tag">Instant · no web</span>
+        <h3>Quick read from Claude's knowledge</h3>
+        <p class="small muted">Analyses right here from what Claude already knows (up to mid-2026). Fast, but not live, and it can't cover very new products.</p>
+        <div class="row"><button id="quickBtn" type="button">Run quick analysis</button></div>
+      </div>
+      <div class="step">
+        <span class="tag">Your data</span>
+        <h3>Paste results or raw reviews</h3>
+        <p class="small muted">Paste the JSON from live search, or any reviews, comments or survey answers. You can also upload a .txt, .csv or .json file.</p>
+        <div class="row"><input type="file" id="file" accept=".txt,.csv,.json,.md" aria-label="Upload a feedback file"></div>
+      </div>
+    </div>
+    <label for="paste" class="small muted">Paste here</label>
+    <textarea id="paste" placeholder='Paste the ```json block from your live-search chat, or raw customer feedback…'></textarea>
+    <div class="row">
+      <button class="primary" id="analyseBtn" type="button">Analyse pasted text</button>
+      <span class="small muted" id="pasteHint">JSON replies from Claude load instantly and use no Claude usage.</span>
+    </div>
+    <div class="status" id="status" role="status"><span id="statusText"></span><button id="stopBtn" type="button">Stop</button></div>
+  </section>
+
+  <section id="results" class="console" aria-live="polite"></section>
+
+  <section class="card console" id="icpSection">
+    <div class="res-head">
+      <div>
+        <h2>Top 5 Ideal Customer Profiles</h2>
+        <p class="small muted">Built from the clusters and segments above, using your Claude account.</p>
+      </div>
+      <button class="primary" id="icpBtn" type="button">Generate ICPs</button>
+    </div>
+    <div id="icps"><div class="empty">Generate ICPs once you have results you trust.</div></div>
+  </section>
+
+  <p class="small muted">Live search uses Claude's web search in your own chat. Quick analysis and ICPs ask Claude from this page, also on your account. Nothing is stored except your last result, kept in this browser only.</p>
+</div>
+
+<script>
+const EXAMPLE = {"product": "Notion", "mode": "example", "items": [{"id": "i1", "source": "Reddit", "url": "", "kind": "customer", "text": "Notion is unbearably slow once a database passes a few thousand rows. Our team waits 5-6 seconds for every filter change and it kills the flow.", "sentiment": "negative", "segment": "Teams & companies"}, {"id": "i2", "source": "Reddit", "url": "", "kind": "customer", "text": "As a student I love Notion for class notes and my exam planner. The templates are amazing and it's free for students, which is great.", "sentiment": "positive", "segment": "Students"}, {"id": "i3", "source": "Reddit", "url": "", "kind": "customer", "text": "Switched from Evernote to Notion last year. Love the flexibility, but the offline mode is still useless. On a plane I can't open half my pages.", "sentiment": "negative", "segment": "Switchers from competitors"}, {"id": "i4", "source": "Reddit", "url": "", "kind": "customer", "text": "The mobile app is painfully slow to load. By the time a page opens on my phone I've forgotten what I wanted to write down.", "sentiment": "negative", "segment": ""}, {"id": "i5", "source": "Reddit", "url": "", "kind": "customer", "text": "I wish Notion had proper offline support. I travel for work as a consultant and sync conflicts have cost me client notes twice.", "sentiment": "mixed", "segment": "Freelancers & consultants"}, {"id": "i6", "source": "Reddit", "url": "", "kind": "customer", "text": "As a founder, Notion is our company wiki, roadmap and hiring tracker. It replaced three tools and our team actually uses it. Great value.", "sentiment": "positive", "segment": "Product & project managers"}, {"id": "i7", "source": "Reddit", "url": "", "kind": "customer", "text": "Pricing went up again and now Notion AI is an extra add-on per seat. For a small business with 12 people that's too expensive for what we use.", "sentiment": "negative", "segment": "Small businesses"}, {"id": "i8", "source": "Reddit", "url": "", "kind": "customer", "text": "Notion is overwhelming for my ADHD brain. Too many options, the learning curve is steep and I spend more time building systems than doing tasks.", "sentiment": "negative", "segment": "Personal productivity users"}, {"id": "i9", "source": "Reddit", "url": "", "kind": "customer", "text": "Permissions are confusing. We accidentally shared an internal HR page with a guest because the sharing settings are buried.", "sentiment": "neutral", "segment": ""}, {"id": "i10", "source": "Reddit", "url": "", "kind": "customer", "text": "The new database automations are great and the formulas 2.0 update is really powerful. Best update in years.", "sentiment": "positive", "segment": ""}, {"id": "i11", "source": "Reddit", "url": "", "kind": "customer", "text": "Moved from Notion to Obsidian because export is terrible. The markdown export breaks databases and I didn't want vendor lock-in for my research notes.", "sentiment": "negative", "segment": "Writers & researchers"}, {"id": "i12", "source": "Reddit", "url": "", "kind": "customer", "text": "Search in Notion is honestly bad. I know the page exists and it just doesn't find it unless I type the exact title.", "sentiment": "negative", "segment": ""}, {"id": "i13", "source": "Hacker News", "url": "", "kind": "customer", "text": "We use Notion at our startup. Engineers hate it for specs because it's slow and the editor fights you with code blocks, but PMs love the roadmaps.", "sentiment": "positive", "segment": "Software developers"}, {"id": "i14", "source": "Hacker News", "url": "", "kind": "customer", "text": "Notion's API is limited and rate limited hard. Integrations with our dev tools were a pain and we ended up building a sync service.", "sentiment": "negative", "segment": "Software developers"}, {"id": "i15", "source": "Hacker News", "url": "", "kind": "customer", "text": "Privacy is my concern. Notion has no end-to-end encryption and now they push AI features on everything. I don't want my data used like that.", "sentiment": "negative", "segment": ""}, {"id": "i16", "source": "Hacker News", "url": "", "kind": "customer", "text": "Notion Calendar is genuinely nice. Fast, clean design, and linking docs to meetings is a great idea for our team.", "sentiment": "positive", "segment": "Teams & companies"}, {"id": "i17", "source": "Hacker News", "url": "", "kind": "customer", "text": "As a developer the lack of a real offline mode and the slow loading make Notion unusable for me. Plain markdown in git is faster.", "sentiment": "negative", "segment": "Software developers"}, {"id": "i18", "source": "App Store", "url": "", "kind": "customer", "text": "Slow and crashes. The app crashes when I open large pages and editing tables on iPhone is frustrating.", "sentiment": "negative", "segment": ""}, {"id": "i19", "source": "App Store", "url": "", "kind": "customer", "text": "Best productivity app. I run my whole life in it: habit tracker, journal, reading list. Easy to use once you get the hang of it.", "sentiment": "positive", "segment": "Personal productivity users"}, {"id": "i20", "source": "App Store", "url": "", "kind": "customer", "text": "Lost my data. A sync bug wiped a page I wrote offline. Support never got back to me after a week.", "sentiment": "negative", "segment": ""}, {"id": "i21", "source": "App Store", "url": "", "kind": "customer", "text": "Great for my freelance clients, I share a portal page with each one. Wish the mobile app was faster.", "sentiment": "positive", "segment": "Freelancers & consultants"}, {"id": "i22", "source": "App Store", "url": "", "kind": "customer", "text": "Powerful but complicated. My parents tried using it for our family planner and gave up, too complex.", "sentiment": "neutral", "segment": "Parents & families"}, {"id": "i23", "source": "App Store", "url": "", "kind": "customer", "text": "Notion AI saves me hours writing marketing briefs and summarizing meetings. Worth every penny for content creators.", "sentiment": "positive", "segment": "Writers & researchers"}, {"id": "i24", "source": "App Store", "url": "", "kind": "customer", "text": "The subscription price keeps going up and the free plan block limit for teams is annoying. Too expensive.", "sentiment": "negative", "segment": ""}, {"id": "i25", "source": "Google Play", "url": "", "kind": "customer", "text": "Extremely slow on Android. Takes forever to load and the widgets don't update. Unusable on my budget phone.", "sentiment": "negative", "segment": ""}, {"id": "i26", "source": "Google Play", "url": "", "kind": "customer", "text": "I'm a writer and I keep my novel outline, characters and research here. Beautiful design and the templates are great.", "sentiment": "positive", "segment": "Writers & researchers"}, {"id": "i27", "source": "Google Play", "url": "", "kind": "customer", "text": "No offline mode. Can't access notes without internet which is a deal breaker when commuting.", "sentiment": "negative", "segment": ""}, {"id": "i28", "source": "Google Play", "url": "", "kind": "customer", "text": "Good for school. Our university club uses it for meeting notes and task boards. Collaboration features work well.", "sentiment": "positive", "segment": "Students"}, {"id": "i29", "source": "Review sites", "url": "", "kind": "expert", "text": "Notion remains the most flexible workspace we've tested, but performance on large databases and the lack of true offline access are still its biggest weaknesses.", "sentiment": "negative", "segment": ""}, {"id": "i30", "source": "Review sites", "url": "", "kind": "expert", "text": "Enterprise buyers will appreciate SSO, SAML and audit logs on the Enterprise plan, though the admin controls lag behind Confluence for compliance-heavy teams.", "sentiment": "neutral", "segment": "Enterprise & IT admins"}, {"id": "i31", "source": "Reddit", "url": "", "kind": "customer", "text": "As a project manager I tried running sprints in Notion. Timelines are fine but there are no real dependencies or workload views, so we went back to Jira.", "sentiment": "negative", "segment": "Product & project managers"}, {"id": "i32", "source": "Reddit", "url": "", "kind": "customer", "text": "Notion's customer support is slow. Took 9 days to get a reply about a billing error on our team plan.", "sentiment": "negative", "segment": "Teams & companies"}, {"id": "i33", "source": "Reddit", "url": "", "kind": "customer", "text": "Our marketing team runs the content calendar in Notion and it's great. The board view plus database relations make planning easy.", "sentiment": "positive", "segment": "Marketers & content creators"}, {"id": "i34", "source": "Reddit", "url": "", "kind": "customer", "text": "The sidebar gets cluttered fast and navigating a big workspace is confusing. New hires get lost in our wiki.", "sentiment": "negative", "segment": ""}, {"id": "i35", "source": "Hacker News", "url": "", "kind": "customer", "text": "Built this because Notion export is broken for anything beyond basic pages and the official API doesn't expose everything.", "sentiment": "negative", "segment": ""}, {"id": "i36", "source": "Reddit", "url": "", "kind": "customer", "text": "I'm a teacher and I share lesson plans with students in Notion. Students love the layout but page loading on school chromebooks is slow.", "sentiment": "positive", "segment": "Students"}], "pain_points": [{"label": "Performance & speed", "description": "", "severity": "High", "item_ids": ["i1", "i4", "i13", "i17", "i18", "i25", "i29", "i32", "i34", "i36"]}, {"label": "Sync & offline", "description": "", "severity": "High", "item_ids": ["i3", "i5", "i14", "i17", "i20", "i29"]}, {"label": "Missing features", "description": "", "severity": "Medium", "item_ids": ["i5", "i17", "i21", "i29"]}, {"label": "Ease of use & learning curve", "description": "", "severity": "High", "item_ids": ["i8", "i9", "i22", "i34"]}, {"label": "Bugs & reliability", "description": "", "severity": "High", "item_ids": ["i18", "i20", "i32", "i35"]}, {"label": "Databases & views", "description": "", "severity": "High", "item_ids": ["i1", "i11", "i29"]}, {"label": "Pricing & value", "description": "", "severity": "Medium", "item_ids": ["i7", "i24", "i32"]}, {"label": "Integrations & data portability", "description": "", "severity": "High", "item_ids": ["i11", "i14", "i35"]}, {"label": "Mobile experience", "description": "", "severity": "Medium", "item_ids": ["i4", "i21"]}, {"label": "Collaboration & permissions", "description": "", "severity": "Medium", "item_ids": ["i9", "i30"]}, {"label": "Editor & writing", "description": "", "severity": "Medium", "item_ids": ["i11", "i13"]}, {"label": "Search & navigation", "description": "", "severity": "Medium", "item_ids": ["i12", "i34"]}, {"label": "Customer support", "description": "", "severity": "Medium", "item_ids": ["i20", "i32"]}], "praise": [{"label": "Templates", "description": "", "severity": null, "item_ids": ["i2", "i26"]}, {"label": "Databases & views", "description": "", "severity": null, "item_ids": ["i10", "i33"]}, {"label": "Build & design", "description": "", "severity": null, "item_ids": ["i16", "i26"]}]};
+const EXAMPLE_ICPS = [
+  { rank: 1, name: "Startup operators", confidence: "Medium", share_of_voice: "~14% of feedback",
+    who: "Founders and ops leads at 5-50 person startups who run wiki, roadmap and hiring in one workspace.",
+    jobs_to_be_done: ["Replace several tools with one workspace", "Keep a growing team aligned"],
+    top_pains: ["Performance & speed on large databases", "Pricing & value as seats grow"],
+    what_they_love: ["All-in-one flexibility", "Databases & views"],
+    buying_triggers: ["First hires join", "Tool costs pile up"],
+    objections: ["Slows down at scale", "AI add-on raises per-seat cost"],
+    where_to_find_them: ["r/startups", "Hacker News", "Founder communities"],
+    messaging_angle: "Your whole company in one fast workspace, without paying for five tools.",
+    evidence: ["Notion is our company wiki, roadmap and hiring tracker. It replaced three tools."] },
+  { rank: 2, name: "Students and educators", confidence: "Medium", share_of_voice: "~11% of feedback",
+    who: "University and school students, plus teachers sharing material with classes.",
+    jobs_to_be_done: ["Organise class notes and exams", "Share lesson plans"],
+    top_pains: ["Slow loading on low-end devices", "Learning curve for new users"],
+    what_they_love: ["Templates", "Free plan for students"],
+    buying_triggers: ["New semester", "Group projects"],
+    objections: ["Too complex to set up", "Needs internet"],
+    where_to_find_them: ["r/Notion", "Campus clubs", "YouTube study channels"],
+    messaging_angle: "Start the semester with a ready-made template, free for students.",
+    evidence: ["I love Notion for class notes and my exam planner. The templates are amazing."] },
+  { rank: 3, name: "Mobile-first and on-the-go workers", confidence: "Medium", share_of_voice: "~17% of feedback",
+    who: "Consultants, freelancers and commuters who need notes on their phone, often offline.",
+    jobs_to_be_done: ["Capture notes quickly on mobile", "Work without a connection"],
+    top_pains: ["Sync & offline", "Mobile app speed"],
+    what_they_love: ["Client portal pages", "Flexibility"],
+    buying_triggers: ["Lost notes after a sync conflict", "Frequent travel"],
+    objections: ["No reliable offline mode"],
+    where_to_find_them: ["App Store and Google Play reviews", "r/productivity"],
+    messaging_angle: "Your notes, instantly, even on a plane.",
+    evidence: ["Sync conflicts have cost me client notes twice."] },
+  { rank: 4, name: "Developer and engineering teams", confidence: "Low", share_of_voice: "~8% of feedback",
+    who: "Engineers and technical PMs writing specs and docs inside startups.",
+    jobs_to_be_done: ["Write technical specs", "Connect docs to dev tools"],
+    top_pains: ["Editor & code blocks", "Limited API and export"],
+    what_they_love: ["Roadmaps for PMs"],
+    buying_triggers: ["Team outgrows Google Docs", "Docs-as-code debates"],
+    objections: ["Vendor lock-in", "Slower than markdown in git"],
+    where_to_find_them: ["Hacker News", "GitHub", "Dev Twitter"],
+    messaging_angle: "Docs your engineers will actually write in: fast, exportable, API-first.",
+    evidence: ["Engineers hate it for specs because it's slow and the editor fights you with code blocks."] },
+  { rank: 5, name: "Marketing and content teams", confidence: "Low", share_of_voice: "~6% of feedback",
+    who: "Marketers and creators running content calendars and briefs.",
+    jobs_to_be_done: ["Plan a content calendar", "Draft briefs faster"],
+    top_pains: ["Pricing of AI add-on"],
+    what_they_love: ["Board views", "Notion AI for drafting"],
+    buying_triggers: ["Content volume grows", "New campaign"],
+    objections: ["Extra cost per seat"],
+    where_to_find_them: ["Marketing Slack communities", "LinkedIn"],
+    messaging_angle: "Plan, write and ship content in one place, with AI that saves hours.",
+    evidence: ["Notion AI saves me hours writing marketing briefs."] },
+];
+const SENT = { positive: "var(--pos)", mixed: "var(--mix)", neutral: "var(--neu)", negative: "var(--neg)" };
+const SEV_ORDER = { High: 0, Medium: 1, Low: 2 };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pct = (n, d) => d ? Math.round((n / d) * 100) + "%" : "0%";
+let state = null;          // current normalized dataset
+let icps = null;
+let sample = null;         // Claude, on the viewer's account
+// Resolves to Claude (or null where unavailable, e.g. GitHub Pages) — wait for it before deciding.
+const sampleReady = (window.claude?.use ? claude.use("sample").catch(() => null) : Promise.resolve(null))
+  .then((s) => (sample = s));
+let ctl = null;
+
+/* ---------------------------------------------------------------- prompts */
+function livePrompt(p) {
+  return `You are a voice-of-customer researcher. Find out what real customers say about "${p}".
+
+1. Use web search, at least 8 different queries, for example: "${p} reddit", "${p} review", "${p} problems", "${p} complaints", "${p} vs", "${p} hacker news", "${p} app store reviews", "${p} G2 reviews", "${p} trustpilot". Use free, trustworthy sources where real users speak: Reddit, Hacker News, Apple App Store and Google Play review pages, G2, Capterra, Trustpilot, GSMArena user opinions, Stack Exchange, official community forums, plus established review outlets (The Verge, CNET, TechRadar, PCMag, Wired, Tom's Guide). Open the most useful pages and read the comments.
+2. Collect at least 40 distinct pieces of feedback, each from a page you actually opened. Mix sources and viewpoints, including happy users. Mark editorial reviewers as "expert", everyone else as "customer".
+3. Group the feedback into pain-point clusters (up to 10) and praise clusters (up to 6). Note who each writer is when the text shows it (student, agency owner, engineering manager, upgrading from iPhone 15…).
+
+Output: a 5-line plain summary, then ONE \`\`\`json code block with exactly this shape:
+{"product":"${p}","basis":"web","items":[{"id":"i1","source":"Reddit","url":"https://…","kind":"customer","text":"short excerpt or close paraphrase, max 30 words","sentiment":"positive|negative|mixed|neutral","segment":"who they are, or empty"}],
+"pain_points":[{"label":"2-5 words","description":"one sentence","severity":"High|Medium|Low","item_ids":["i1"]}],
+"praise":[{"label":"2-5 words","description":"one sentence","item_ids":["i2"]}]}
+Rules: every item needs the real URL you opened; never invent feedback; an item may sit in several clusters. Finish with the line: "Copy the JSON block above into VOC Radar."`;
+}
+
+const SCHEMA = `{"product":"…","basis":"BASIS","items":[{"id":"i1","source":"…","url":"","kind":"customer|expert","text":"…","sentiment":"positive|negative|mixed|neutral","segment":"who they are, or empty"}],
+"pain_points":[{"label":"2-5 words","description":"one sentence","severity":"High|Medium|Low","item_ids":["i1"]}],
+"praise":[{"label":"2-5 words","description":"one sentence","item_ids":["i2"]}]}`;
+
+function knowledgePrompt(p) {
+  return `You are a voice-of-customer analyst. From your own training knowledge only (no browsing), summarise what customers commonly say about "${p}".
+If you do not know this product well enough, or it is newer than your knowledge, reply with {"unknown": true, "reason": "…"} and nothing else.
+Otherwise write 30 items. Each item is a short paraphrase (max 25 words) of a commonly reported customer opinion, as a real user would put it, spread across the places it is usually discussed (source = "Reddit", "App Store", "G2", "Hacker News", "Review sites"...). Leave url empty: these are representative paraphrases, not quotes. Reflect the real balance of praise and complaints. Then cluster them: up to 8 pain points, up to 5 praise themes, with severity for pain points.
+Reply with only JSON in this shape:
+${SCHEMA.replace("BASIS", "knowledge")}`;
+}
+
+function pastePrompt(p, text) {
+  return `You are a voice-of-customer analyst. Below is raw customer feedback${p ? ` about "${p}"` : ""}.
+Split it into distinct opinions (one item each, up to 120 items; keep the writer's words, trimmed to max 40 words; keep any URL or source name you can see; source "Pasted" otherwise). Skip anything that is not feedback.
+Then cluster: up to 10 pain points with severity, up to 6 praise themes. Note who each writer is when the text shows it.
+Reply with only JSON in this shape:
+${SCHEMA.replace("BASIS", "pasted")}
+
+FEEDBACK:
+${text}`;
+}
+
+function icpPrompt(d) {
+  const pains = d.pain.map((c) => `- ${c.label} | ${c.count} items (${pct(c.count, d.items.length)}) | ${c.severity || ""} | ${c.description || ""} | e.g. "${(c.items[0]?.text || "").slice(0, 160)}"`).join("\n");
+  const praise = d.praise.map((c) => `- ${c.label} | ${c.count} items | ${c.description || ""}`).join("\n");
+  const segs = d.segments.map((s) => `- ${s.label}: ${s.count} items; their pains: ${s.pains.join(", ") || "-"}; they like: ${s.likes.join(", ") || "-"}`).join("\n");
+  const sampleItems = d.items.slice(0, sample ? 50 : 25).map((i) => `- [${i.source}; ${i.sentiment}; ${i.segment || "?"}] ${i.text.slice(0, 200)}`).join("\n");
+  return `You are a go-to-market strategist. Using ONLY this voice-of-customer evidence about "${d.product}" (${d.items.length} items), define the TOP 5 Ideal Customer Profiles: the segments that get the most value, are most vocal, or are the biggest opportunity (including people the product currently fails, where a fix would win them).
+
+PAIN POINTS:
+${pains || "(none)"}
+
+PRAISE:
+${praise || "(none)"}
+
+SEGMENTS SEEN:
+${segs || "(none detected)"}
+
+SAMPLE FEEDBACK:
+${sampleItems}
+
+Reply with only a JSON object, exactly 5 ICPs, in this shape:
+{"icps":[{"rank":1,"name":"memorable segment name","who":"role / life stage / company type and size, max 30 words","jobs_to_be_done":["…"],"top_pains":["tie to the pain points above"],"what_they_love":["…"],"buying_triggers":["…"],"objections":["…"],"where_to_find_them":["communities, channels, events"],"messaging_angle":"one-line value proposition","evidence":["short excerpt from the feedback"],"share_of_voice":"e.g. ~18% of feedback","confidence":"High|Medium|Low"}]}
+Keep it compact: every list is an array of 2-3 short strings (max 12 words each), evidence max 2 items. Rank 1 is the most attractive. Use Low confidence where evidence is thin. Don't invent statistics. No text outside the JSON.`;
+}
+
+/* ---------------------------------------------------------------- data */
+function parseLooseJSON(text) {
+  const t = String(text).trim();
+  try { return JSON.parse(t); } catch {}
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) { try { return JSON.parse(fence[1]); } catch {} }
+  const s = t.indexOf("{"), e = t.lastIndexOf("}");
+  if (s >= 0 && e > s) { try { return JSON.parse(t.slice(s, e + 1)); } catch {} }
+  return null;
+}
+
+function normalize(raw, mode) {
+  const items = (Array.isArray(raw.items) ? raw.items : []).filter((i) => i && i.text).map((i, n) => ({
+    id: String(i.id ?? "i" + (n + 1)), source: String(i.source || "Unknown"), url: /^https?:\/\//.test(i.url || "") ? i.url : "",
+    kind: i.kind === "expert" ? "expert" : "customer", text: String(i.text).trim(),
+    sentiment: ["positive", "negative", "mixed", "neutral"].includes(String(i.sentiment).toLowerCase()) ? String(i.sentiment).toLowerCase() : "neutral",
+    segment: String(i.segment || "").trim(),
+  }));
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const cluster = (list, kind) => (Array.isArray(list) ? list : []).map((c) => {
+    const members = [...new Set((c.item_ids || []).map(String))].map((id) => byId.get(id)).filter(Boolean);
+    return { label: String(c.label || "Unnamed"), description: String(c.description || ""), kind,
+             severity: kind === "pain" ? (["High", "Medium", "Low"].includes(c.severity) ? c.severity : "Medium") : null,
+             items: members, count: members.length };
+  }).filter((c) => c.count > 0).sort((a, b) => b.count - a.count || (SEV_ORDER[a.severity] ?? 3) - (SEV_ORDER[b.severity] ?? 3));
+  const pain = cluster(raw.pain_points, "pain"), praise = cluster(raw.praise, "praise");
+  for (const i of items) {
+    i.pains = pain.filter((c) => c.items.includes(i)).map((c) => c.label);
+    i.likes = praise.filter((c) => c.items.includes(i)).map((c) => c.label);
+  }
+  const segMap = new Map();
+  for (const i of items) {
+    if (!i.segment) continue;
+    const key = i.segment.charAt(0).toUpperCase() + i.segment.slice(1);
+    if (!segMap.has(key)) segMap.set(key, []);
+    segMap.get(key).push(i);
+  }
+  const top = (arr) => Object.entries(arr.reduce((m, x) => (m[x] = (m[x] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1]).slice(0, 3).map((e) => e[0]);
+  const segments = [...segMap.entries()].map(([label, its]) => ({ label, count: its.length,
+    pains: top(its.flatMap((i) => i.pains)), likes: top(its.flatMap((i) => i.likes)) })).sort((a, b) => b.count - a.count);
+  return { product: String(raw.product || $("product").value || "this product"), mode, items, pain, praise, segments, at: new Date().toISOString() };
+}
+
+/* ---------------------------------------------------------------- render */
+function sentCounts(items) {
+  const c = { positive: 0, mixed: 0, neutral: 0, negative: 0 };
+  for (const i of items) c[i.sentiment]++;
+  return c;
+}
+
+function sentBar(c, total) {
+  return `<div class="sentbar" role="img" aria-label="sentiment split">${["positive", "mixed", "neutral", "negative"].map((k) =>
+    c[k] ? `<span style="width:${(c[k] / total) * 100}%;background:${SENT[k]}" title="${k}: ${c[k]}"></span>` : "").join("")}</div>`;
+}
+
+const MODE = {
+  live: ["Live web search", "live", "Collected from the web by Claude in your chat."],
+  knowledge: ["Claude's knowledge, not live", "knowledge", "Representative paraphrases from Claude's training knowledge (to mid-2026). Use live search for current, linkable feedback."],
+  pasted: ["Your data", "live", "Analysed from the feedback you supplied."],
+  example: ["Sample · invented data", "example", "Sample dashboard with invented comments, to show what you get. Search any product above for real results."],
+};
+
+// Plain-language takeaways computed from the data (no Claude call).
+function insights(d) {
+  const n = d.items.length, sc = sentCounts(d.items), out = [];
+  if (!n) return out;
+  const tone = sc.negative > sc.positive * 1.3 ? "Mostly critical" : sc.positive > sc.negative * 1.3 ? "Mostly positive" : "Split opinion";
+  out.push({ k: "Overall", cls: sc.negative > sc.positive ? "neg" : "pos",
+    t: `${tone}: ${pct(sc.negative, n)} negative and ${pct(sc.positive, n)} positive across ${n} items from ${new Set(d.items.map((i) => i.source)).size} sources.` });
+  const [p1, p2, p3] = d.pain;
+  if (p1) out.push({ k: "Biggest pain", cls: "neg",
+    t: `${p1.label} comes up in ${pct(p1.count, n)} of feedback${p1.severity ? ` (${p1.severity.toLowerCase()} severity)` : ""}. “${p1.items[0].text.slice(0, 110)}${p1.items[0].text.length > 110 ? "…" : ""}”` });
+  if (p2) out.push({ k: "Also hurting", cls: "mix", t: `${p2.label} (${pct(p2.count, n)})${p3 ? ` and ${p3.label} (${pct(p3.count, n)})` : ""}.` });
+  if (d.praise[0]) out.push({ k: "What wins people over", cls: "pos",
+    t: `${d.praise[0].label}${d.praise[1] ? ` and ${d.praise[1].label}` : ""} are the most praised${d.praise[0].description ? ": " + d.praise[0].description : "."}` });
+  const seg = d.segments[0];
+  if (seg) out.push({ k: "Loudest segment", cls: "",
+    t: `${seg.label} wrote ${seg.count} items${seg.pains[0] ? `; their top pain is ${seg.pains[0]}` : ""}${seg.likes[0] ? ` and they like ${seg.likes[0]}` : ""}.` });
+  const bySrc = [...new Set(d.items.map((i) => i.source))].map((s) => { const its = d.items.filter((i) => i.source === s);
+    return { s, n: its.length, neg: its.filter((i) => i.sentiment === "negative").length / its.length }; }).filter((x) => x.n >= 3);
+  if (bySrc.length >= 2) { bySrc.sort((a, b) => b.neg - a.neg); const hi = bySrc[0], lo = bySrc[bySrc.length - 1];
+    if (hi.neg - lo.neg >= 0.2) out.push({ k: "Where it's harshest", cls: "",
+      t: `${hi.s} is the most critical (${Math.round(hi.neg * 100)}% negative); ${lo.s} the least (${Math.round(lo.neg * 100)}%).` }); }
+  return out;
+}
+
+function render() {
+  const d = state, el = $("results");
+  if (!d) { el.innerHTML = ""; return; }
+  const n = d.items.length, sc = sentCounts(d.items);
+  const sources = [...new Set(d.items.map((i) => i.source))];
+  const [mLabel, mClass, mNote] = MODE[d.mode] || MODE.pasted;
+  const maxShare = Math.max(1, ...d.pain.map((c) => c.count));
+  const painBars = d.pain.slice(0, 10).map((c) => `<div class="bar"><span>${esc(c.label)}</span>
+      <div class="track"><div class="fill" style="width:${(c.count / maxShare) * 100}%;background:${c.severity === "High" ? "var(--neg)" : c.severity === "Low" ? "var(--neu)" : "var(--mix)"}"></div></div>
+      <span class="val num">${c.count} · ${pct(c.count, n)}</span></div>`).join("") || `<div class="empty">No pain points found.</div>`;
+  const srcRows = sources.map((s) => { const its = d.items.filter((i) => i.source === s); const c = sentCounts(its);
+      return `<div class="srcbar"><span>${esc(s)}</span>${sentBar(c, its.length)}<span class="num muted">${its.length}</span></div>`; }).join("");
+
+  el.innerHTML = `
+    <div class="res-head">
+      <div><h2>Voice of customer: ${esc(d.product)}</h2><p class="small muted">${esc(mNote)}</p></div>
+      <div class="row"><span class="badge ${mClass}">${esc(mLabel)}</span>${d.mode === "example" ? "" : `<button type="button" id="showSample">Show sample</button>`}<button type="button" id="copyReport">Copy report</button></div>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Feedback items</div><div class="v">${n}</div></div>
+      <div class="tile"><div class="k">Positive</div><div class="v" style="color:var(--pos)">${pct(sc.positive, n)}</div></div>
+      <div class="tile"><div class="k">Negative</div><div class="v" style="color:var(--neg)">${pct(sc.negative, n)}</div></div>
+      <div class="tile"><div class="k">Mixed</div><div class="v" style="color:var(--mix)">${pct(sc.mixed, n)}</div></div>
+      <div class="tile"><div class="k">Sources</div><div class="v">${sources.length}</div></div>
+    </div>
+    <div class="console"><h3>Key insights</h3><div class="insights">${insights(d).map((x) =>
+      `<div class="insight ${x.cls}"><span class="k">${esc(x.k)}</span><p>${esc(x.t)}</p></div>`).join("")}</div></div>
+    <div class="grid2">
+      <div class="card console"><h3>Top pain points</h3><p class="small muted">Bar length = number of items. Colour = severity: <span style="color:var(--neg)">high</span>, <span style="color:var(--mix)">medium</span>, <span style="color:var(--neu)">low</span>.</p><div class="bars">${painBars}</div></div>
+      <div class="card console"><h3>Sentiment by source</h3><div class="bars">${srcRows}</div>
+        <div class="legend">${["positive", "mixed", "neutral", "negative"].map((k) => `<span><i style="background:${SENT[k]}"></i>${k} ${sc[k]}</span>`).join("")}</div></div>
+    </div>
+    <div class="card">
+      <div class="tabs" role="tablist">
+        ${["Pain points", "What customers love", "Segments", "All feedback"].map((t, i) => `<button role="tab" type="button" data-tab="${i}" aria-selected="${i === 0}">${t}</button>`).join("")}
+      </div>
+      <div class="panel" id="tabPanel"></div>
+    </div>`;
+  el.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(+b.dataset.tab)));
+  $("copyReport").addEventListener("click", copyReport);
+  $("showSample")?.addEventListener("click", showSample);
+  showTab(0);
+}
+
+function quoteHTML(i) {
+  const link = i.url ? ` · <a href="${esc(i.url)}" target="_blank" rel="noopener">source ↗</a>` : "";
+  return `<div class="quote"><span class="dot" style="background:${SENT[i.sentiment]}"></span>${esc(i.text)}
+    <div class="meta">${esc(i.source)}${i.kind === "expert" ? " · expert review" : ""}${i.segment ? " · " + esc(i.segment) : ""}${link}</div></div>`;
+}
+
+function clustersHTML(list) {
+  if (!list.length) return `<div class="empty">Nothing here yet.</div>`;
+  const n = state.items.length;
+  return list.map((c, k) => `<details class="cl"${k === 0 ? " open" : ""}><summary>
+      <strong>${esc(c.label)}</strong>${c.severity ? `<span class="sev ${c.severity}">${c.severity}</span>` : ""}
+      <span class="small muted num">${c.count} items · ${pct(c.count, n)}</span></summary>
+      <div class="cl-body">${c.description ? `<p class="small muted">${esc(c.description)}</p>` : ""}${c.items.slice(0, 6).map(quoteHTML).join("")}
+      ${c.items.length > 6 ? `<p class="small muted">+${c.items.length - 6} more in All feedback.</p>` : ""}</div></details>`).join("");
+}
+
+function showTab(t) {
+  document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(+b.dataset.tab === t)));
+  const p = $("tabPanel"), d = state;
+  if (t === 0) p.innerHTML = clustersHTML(d.pain);
+  if (t === 1) p.innerHTML = clustersHTML(d.praise);
+  if (t === 2) p.innerHTML = d.segments.length ? `<div class="tablewrap"><table><thead><tr><th>Segment</th><th>Items</th><th>Their top pains</th><th>What they like</th></tr></thead><tbody>
+      ${d.segments.map((s) => `<tr><td>${esc(s.label)}</td><td class="num">${s.count}</td><td>${esc(s.pains.join(", ") || "–")}</td><td>${esc(s.likes.join(", ") || "–")}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty">No segments detected. ICPs will lean on the feedback itself.</div>`;
+  if (t === 3) {
+    const opts = (vals, id, label) => `<label class="small muted">${label} <select id="${id}"><option value="">All</option>${vals.map((v) => `<option>${esc(v)}</option>`).join("")}</select></label>`;
+    p.innerHTML = `<div class="row">${opts(["positive", "mixed", "neutral", "negative"], "fSent", "Sentiment")}
+      ${opts([...new Set(d.items.map((i) => i.source))], "fSrc", "Source")}
+      ${opts([...d.pain, ...d.praise].map((c) => c.label), "fTheme", "Theme")}<span class="small muted" id="fCount"></span></div>
+      <div class="tablewrap" style="max-height:480px"><table><thead><tr><th>Sentiment</th><th>Feedback</th><th>Source</th><th>Themes</th></tr></thead><tbody id="fBody"></tbody></table></div>`;
+    const draw = () => {
+      const s = $("fSent").value, src = $("fSrc").value, th = $("fTheme").value;
+      const rows = d.items.filter((i) => (!s || i.sentiment === s) && (!src || i.source === src) && (!th || i.pains.includes(th) || i.likes.includes(th)));
+      $("fCount").textContent = `${rows.length} of ${d.items.length}`;
+      $("fBody").innerHTML = rows.map((i) => `<tr><td><span class="dot" style="background:${SENT[i.sentiment]}"></span>${i.sentiment}</td>
+        <td>${esc(i.text)}${i.segment ? `<div class="small muted">${esc(i.segment)}</div>` : ""}</td>
+        <td>${i.url ? `<a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.source)}</a>` : esc(i.source)}</td>
+        <td class="small">${esc([...i.pains, ...i.likes].join(", "))}</td></tr>`).join("");
+    };
+    ["fSent", "fSrc", "fTheme"].forEach((id) => $(id).addEventListener("change", draw));
+    draw();
+  }
+}
+
+const toArr = (v) => Array.isArray(v) ? v.filter((x) => x != null && x !== "").map((x) => typeof x === "object" ? Object.values(x).join(": ") : String(x))
+  : v == null || v === "" ? [] : String(v).split(/\s*[;\n•]\s*/).filter(Boolean);
+const toStr = (v) => Array.isArray(v) ? v.join(", ") : v == null ? "" : typeof v === "object" ? Object.values(v).join(" · ") : String(v);
+
+// Find the list of ICPs whatever wrapper Claude used: {icps:[…]}, {ICPs:[…]}, {profiles:[…]}, […]
+function extractICPs(out) {
+  if (!out) return [];
+  if (Array.isArray(out)) return out.filter((x) => x && typeof x === "object");
+  if (typeof out === "object") {
+    for (const [k, v] of Object.entries(out)) if (Array.isArray(v) && /icp|profile|persona|segment|customer/i.test(k)) return extractICPs(v);
+    const firstArr = Object.values(out).find((v) => Array.isArray(v) && v[0] && typeof v[0] === "object");
+    if (firstArr) return firstArr;
+    if (out.name || out.who) return [out];
+  }
+  return [];
+}
+
+function cleanICP(p, k) {
+  const g = (...keys) => { for (const key of keys) if (p[key] != null && p[key] !== "") return p[key]; return undefined; };
+  return {
+    rank: Number(g("rank")) || k + 1,
+    name: toStr(g("name", "title", "segment", "persona")) || `ICP ${k + 1}`,
+    who: toStr(g("who", "description", "profile", "summary")),
+    jobs_to_be_done: toArr(g("jobs_to_be_done", "jobs", "jtbd", "goals")),
+    top_pains: toArr(g("top_pains", "pains", "pain_points")),
+    what_they_love: toArr(g("what_they_love", "loves", "likes", "praise")),
+    buying_triggers: toArr(g("buying_triggers", "triggers")),
+    objections: toArr(g("objections")),
+    where_to_find_them: toArr(g("where_to_find_them", "channels", "where_to_find")),
+    messaging_angle: toStr(g("messaging_angle", "messaging", "value_proposition")),
+    evidence: toArr(g("evidence", "quotes")),
+    share_of_voice: toStr(g("share_of_voice", "estimated_share_of_voice")),
+    confidence: toStr(g("confidence")),
+  };
+}
+
+function renderICPs() {
+  try { renderICPsInner(); } catch (e) { $("icps").innerHTML = `<div class="empty">Couldn't display these ICPs (${esc(e.message)}). Press Generate ICPs to try again.</div>`; }
+}
+function renderICPsInner() {
+  const el = $("icps");
+  if (!icps) { el.innerHTML = `<div class="empty">Generate ICPs once you have results you trust.</div>`; return; }
+  const list = (arr) => toArr(arr).map(esc).join(" · ");
+  el.innerHTML = `<div class="icps">${icps.map((p, k) => `<article class="card icp">
+      <span class="rank">ICP ${p.rank || k + 1}${p.confidence ? ` · ${esc(p.confidence)} confidence` : ""}${p.share_of_voice ? " · " + esc(p.share_of_voice) : ""}</span>
+      <h3>${esc(p.name)}</h3><p>${esc(p.who)}</p>
+      ${p.messaging_angle ? `<div class="angle"><strong>Messaging:</strong> ${esc(p.messaging_angle)}</div>` : ""}
+      <dl>${[["Jobs to be done", p.jobs_to_be_done], ["Top pains", p.top_pains], ["What they love", p.what_they_love], ["Buying triggers", p.buying_triggers],
+        ["Objections", p.objections], ["Where to find them", p.where_to_find_them]].filter(([, v]) => v && v.length)
+        .map(([k, v]) => `<div><dt>${k}</dt><dd>${list(v)}</dd></div>`).join("")}</dl>
+      ${toArr(p.evidence).length ? `<details><summary class="small muted">Evidence</summary>${toArr(p.evidence).slice(0, 3).map((e) => `<div class="quote small">${esc(e)}</div>`).join("")}</details>` : ""}
+    </article>`).join("")}</div>`;
+}
+
+/* ---------------------------------------------------------------- actions */
+function setStatus(text, { err = false, stop = false } = {}) {
+  const s = $("status");
+  s.classList.toggle("show", !!text); s.classList.toggle("err", err);
+  $("statusText").textContent = text || ""; $("stopBtn").style.display = stop ? "" : "none";
+}
+function busy(on) { ["quickBtn", "analyseBtn", "icpBtn"].forEach((id) => $(id).disabled = on); }
+
+const ERR = {
+  not_granted: "Claude access wasn't allowed for this page. Reload and choose Allow to use quick analysis and ICPs.",
+  rate_limited: "You've hit a Claude usage limit. Wait a bit and try again.",
+  session_expired: "Your Claude session expired. Sign in again and reload.",
+  sampling_disabled: "Claude isn't available on this account here.",
+  invalid_json: "Claude's reply wasn't valid data. Try again, or paste less text.",
+  prompt_too_large: "That's too much text at once. Paste about half and try again.",
+  refused: "Claude declined this request. Try rewording or pasting different text.",
+};
+const errText = (e) => (ERR[e?.code] || (e?.message ? "Something went wrong: " + e.message : "Something went wrong. Try again.")) + (e?.code ? ` [${e.code}]` : "");
+
+function save() { try { localStorage.setItem("voc-radar", JSON.stringify({ state: strip(state), icps })); } catch {} }
+function strip(d) { // store the raw shape, not object graph
+  if (!d) return null;
+  const idOf = (c) => ({ label: c.label, description: c.description, severity: c.severity, item_ids: c.items.map((i) => i.id) });
+  return { product: d.product, mode: d.mode, items: d.items.map(({ pains, likes, ...i }) => i), pain_points: d.pain.map(idOf), praise: d.praise.map(idOf) };
+}
+
+function load(raw, mode) {
+  const d = normalize(raw, mode);
+  if (!d.items.length) throw { message: "no feedback items found in that data" };
+  state = d; icps = null; render(); renderICPs(); save();
+  document.getElementById("results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Outside claude.ai (e.g. GitHub Pages) the page can't call Claude, so the request goes to the
+// visitor's own Claude chat instead, and they paste the JSON reply back here.
+async function handOff(prompt, what) {
+  let copied = false;
+  try { await navigator.clipboard.writeText(prompt); copied = true; } catch {}
+  const url = prompt.length < 7000 ? "https://claude.ai/new?q=" + encodeURIComponent(prompt) : "https://claude.ai/new";
+  const w = window.open(url, "_blank", "noopener");
+  if (!copied && !w) { $("paste").value = prompt; setStatus(`Copy the ${what} request from the box below into a new Claude chat, then paste Claude's JSON reply back here.`); return; }
+  setStatus(`${what} request opened in Claude${copied ? " and copied to your clipboard (paste it if the chat is empty)" : ""}. When Claude replies, paste its JSON below and press Analyse pasted text.`);
+}
+
+async function ask(prompt, label, opts = {}) {
+  if (!sample && window.claude?.use) { setStatus("Connecting to Claude…"); await sampleReady; }
+  if (!sample) { await handOff(prompt, label.split(" ")[0] === "Building" ? "ICP" : "Analysis"); return null; }
+  ctl = new AbortController(); busy(true);
+  setStatus(label + " Claude is thinking; this can take a minute.", { stop: true });
+  try {
+    const out = await sample.json(prompt, { signal: ctl.signal, cache: false,
+      onText: ({ text }) => setStatus(`${label} Writing… ${text.length.toLocaleString()} characters so far.`, { stop: true }) });
+    setStatus("");
+    return out;
+  } catch (e) {
+    const salvaged = e?.text ? parseLooseJSON(e.text) : null;     // a reply that was nearly right
+    if (salvaged && opts.accept?.(salvaged)) { setStatus(""); return salvaged; }
+    if (e?.code === "cancelled") setStatus("Stopped.");
+    else if (e?.code === "invalid_json" && e.text) { $("paste").value = e.text; setStatus("Claude's reply came back incomplete (it's in the text box). Press the button again to retry.", { err: true }); }
+    else setStatus(errText(e), { err: true });
+    return null;
+  } finally { busy(false); }
+}
+
+function productName() {
+  const p = $("product").value.trim();
+  if (!p) { setStatus("Type a product or company first.", { err: true }); $("product").focus(); }
+  return p;
+}
+
+$("product").addEventListener("input", () => {
+  const p = $("product").value.trim();
+  $("liveLink").href = "https://claude.ai/new?q=" + encodeURIComponent(livePrompt(p || "PRODUCT"));
+});
+$("liveLink").addEventListener("click", (e) => {
+  if (!$("product").value.trim()) { e.preventDefault(); productName(); return; }
+  setStatus("Live search opened in a new tab. When Claude finishes, copy its JSON block and paste it below.");
+});
+$("copyPrompt").addEventListener("click", async () => {
+  const p = productName(); if (!p) return;
+  try { await navigator.clipboard.writeText(livePrompt(p)); setStatus("Request copied. Paste it into a new Claude chat with web search on."); }
+  catch { $("paste").value = livePrompt(p); setStatus("Couldn't reach the clipboard, so the request is in the box below. Copy it from there."); }
+});
+$("quickBtn").addEventListener("click", async () => {
+  const p = productName(); if (!p) return;
+  const out = await ask(knowledgePrompt(p), `Quick analysis of ${p}.`);
+  if (!out) return;
+  if (out.unknown) { setStatus(`Claude doesn't know enough about ${p}: ${out.reason || ""} Use live search instead.`, { err: true }); return; }
+  try { load({ ...out, product: out.product || p }, "knowledge"); } catch (e) { setStatus(errText(e), { err: true }); }
+});
+$("analyseBtn").addEventListener("click", async () => {
+  const text = $("paste").value.trim();
+  if (!text) { setStatus("Paste the JSON from live search, or some feedback, first.", { err: true }); return; }
+  const parsed = parseLooseJSON(text);
+  if (parsed && !Array.isArray(parsed.items) && extractICPs(parsed).length) {
+    if (!state) { setStatus("Load feedback results before ICPs.", { err: true }); return; }
+    icps = extractICPs(parsed).slice(0, 5).map(cleanICP); renderICPs(); save();
+    setStatus("ICPs loaded."); $("icpSection").scrollIntoView({ behavior: "smooth" }); return;
+  }
+  if (parsed?.unknown) { setStatus(`Claude doesn't know enough about this product: ${parsed.reason || ""} Use live search instead.`, { err: true }); return; }
+  if (parsed && Array.isArray(parsed.items)) {
+    const mode = parsed.basis === "knowledge" ? "knowledge" : parsed.basis === "pasted" ? "pasted" : "live";
+    try { load(parsed, mode); setStatus(`Loaded ${state.items.length} items.`); } catch (e) { setStatus(errText(e), { err: true }); }
+    return;
+  }
+  const out = await ask(pastePrompt($("product").value.trim(), text.slice(0, 120000)), "Analysing your feedback.");
+  if (!out) return;
+  try { load(out, "pasted"); if (text.length > 120000) setStatus("Only the first 120,000 characters were analysed."); } catch (e) { setStatus(errText(e), { err: true }); }
+});
+$("file").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  if (f.size > 3e6) { setStatus("That file is over 3 MB. Split it and try again.", { err: true }); return; }
+  $("paste").value = await f.text();
+  setStatus(`Loaded ${f.name}. Press Analyse pasted text.`);
+});
+$("stopBtn").addEventListener("click", () => ctl?.abort());
+$("icpBtn").addEventListener("click", async () => {
+  if (!state) return;
+  const out = await ask(icpPrompt(state), `Building ICPs for ${state.product}.`, { accept: (o) => extractICPs(o).length > 0 });
+  if (!out) return;
+  const list = extractICPs(out);
+  if (!list.length) { $("paste").value = JSON.stringify(out, null, 2); setStatus("Claude's reply had no ICPs in it (shown in the text box). Press Generate ICPs to retry.", { err: true }); return; }
+  icps = list.slice(0, 5).map(cleanICP); renderICPs(); save();
+  setStatus(list.length < 5 ? `Claude returned ${list.length} ICPs.` : "");
+  $("icpSection").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+async function copyReport() {
+  const d = state, n = d.items.length, sc = sentCounts(d.items);
+  const sec = (title, list) => `## ${title}\n` + list.map((c) => `### ${c.label} (${c.count} items, ${pct(c.count, n)})${c.severity ? " · " + c.severity : ""}\n${c.description}\n` +
+    c.items.slice(0, 3).map((i) => `> ${i.text} (${i.source}${i.url ? ", " + i.url : ""})`).join("\n")).join("\n\n");
+  let md = `# Voice of customer: ${d.product}\n${MODE[d.mode]?.[0] || ""} · ${n} items · positive ${pct(sc.positive, n)}, negative ${pct(sc.negative, n)}, mixed ${pct(sc.mixed, n)}\n\n` +
+    sec("Pain points", d.pain) + "\n\n" + sec("What customers love", d.praise);
+  if (icps) md += "\n\n## Top 5 ICPs\n" + icps.map((p, k) => `### ${p.rank || k + 1}. ${p.name}\n${p.who}\n- Pains: ${(p.top_pains || []).join("; ")}\n- Triggers: ${(p.buying_triggers || []).join("; ")}\n- Messaging: ${p.messaging_angle || ""}`).join("\n\n");
+  try { await navigator.clipboard.writeText(md); setStatus("Report copied as Markdown."); }
+  catch { $("paste").value = md; setStatus("Couldn't reach the clipboard, so the report is in the text box. Copy it from there."); }
+}
+
+function showSample() {
+  state = normalize(EXAMPLE, "example"); icps = EXAMPLE_ICPS.map(cleanICP);
+  render(); renderICPs(); save(); setStatus("");
+}
+
+/* ---------------------------------------------------------------- start */
+(function init() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem("voc-radar") || "null"); } catch {}
+  if (saved?.state) { state = normalize(saved.state, saved.state.mode); icps = Array.isArray(saved.icps) ? saved.icps.map(cleanICP) : null; $("product").value = state.mode === "example" ? "" : state.product; }
+  else { state = normalize(EXAMPLE, "example"); icps = EXAMPLE_ICPS.map(cleanICP); }
+  if (state.mode === "example" && !icps) icps = EXAMPLE_ICPS.map(cleanICP);
+  $("product").dispatchEvent(new Event("input"));
+  render(); renderICPs();
+  
+})();
+</script>
+</body>
+</html>
