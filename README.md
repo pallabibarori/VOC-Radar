@@ -4,7 +4,7 @@
 
 VOC Radar gathers voice-of-customer feedback from free, trustworthy public sources (Reddit, Hacker News, App Store, Google Play and established review sites), clusters it by sentiment and pain point, and generates your **top 5 Ideal Customer Profiles (ICPs)**.
 
-**[▶ Try the live demo](https://YOUR-USERNAME.github.io/voc-radar/)** · no install, runs on your own Claude account
+**[▶ Try the live demo](https://pallabibarori.github.io/voc-radar/)** · no install, runs on your own Claude account
 
 ![VOC Radar dashboard showing sentiment, key insights and top pain points for Notion](docs/dashboard.png)
 <sub>Sample dashboard for Notion, built from invented example comments.</sub>
@@ -35,7 +35,7 @@ VOC Radar gathers voice-of-customer feedback from free, trustworthy public sourc
 
 ### 🌐 Web version
 
-Open the [live demo](https://YOUR-USERNAME.github.io/voc-radar/), type a product, and click **Open live search**. Claude researches it in your own chat. Paste its reply back into the page to get the dashboard, then click **Generate ICPs**.
+Open the [live demo](https://pallabibarori.github.io/voc-radar/), type a product, and click **Open live search**. Claude researches it in your own chat. Paste its reply back into the page to get the dashboard, then click **Generate ICPs**.
 
 It's a single HTML file with no server and no build step. You can also open `web/index.html` straight from your computer.
 
