@@ -6,7 +6,8 @@ VOC Radar gathers voice-of-customer feedback from free, trustworthy public sourc
 
 **[▶ Try the live demo](https://pallabibarori.github.io/voc-radar/)** · no install, runs on your own Claude account
 
-![VOC Radar dashboard showing sentiment, key insights and top pain points for Notion](docs/dashboard.png)
+[VOC Radar dashboard showing sentiment, key insights and top pain points for Notion](docs/dashboard.png)
+
 <sub>Sample dashboard for Notion, built from invented example comments.</sub>
 
 ---
@@ -21,7 +22,7 @@ VOC Radar gathers voice-of-customer feedback from free, trustworthy public sourc
 | 💡 **Summarise** | Plain-language key insights: biggest pain, what wins people over, loudest segment, harshest source |
 | 🎯 **Profile** | Generates the top 5 ICPs: who they are, jobs to be done, pains, buying triggers, objections, channels and a messaging angle |
 
-![Top 5 ICP cards with jobs to be done, pains, triggers and messaging](docs/icps.png)
+[Top 5 ICP cards with jobs to be done, pains, triggers and messaging](docs/icps.png)
 
 ## Two ways to use it
 
@@ -41,7 +42,7 @@ It's a single HTML file with no server and no build step. You can also open `web
 
 ### 🐍 Python app
 
-![Streamlit version of VOC Radar](docs/python-app.png)
+[Streamlit version of VOC Radar](docs/python-app.png)
 
 ```bash
 git clone https://github.com/YOUR-USERNAME/voc-radar.git
